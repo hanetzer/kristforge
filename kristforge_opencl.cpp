@@ -127,7 +127,7 @@ long score_hash(uchar *hash) {
 }
 
 __kernel void krist_miner(
-	__global const uchar *address,  // 10 bytes
+	__global const uchar *kristAddress,  // 10 bytes
 	__global const uchar *block,    // 12 bytes
 	__global const uchar *prefix,   // 2 bytes
 	const long offset,              // convert to 10 bytes
@@ -143,7 +143,7 @@ __kernel void krist_miner(
 	// copy data to input
 
 #pragma unroll
-	for (i = 0; i < 10; i++) input[i] = address[i];
+	for (i = 0; i < 10; i++) input[i] = kristAddress[i];
 
 #pragma unroll
 	for (i = 10; i < 22; i++) input[i] = block[i - 10];
@@ -161,7 +161,7 @@ __kernel void krist_miner(
 	if (score_hash(hashed) < work) {
 		// copy data to output
 #pragma unroll
-		for (i = 0; i < 10; i++) solution[i] = address[i];
+		for (i = 0; i < 10; i++) solution[i] = kristAddress[i];
 
 #pragma unroll
 		for (i = 10; i < 22; i++) solution[i] = block[i - 10];

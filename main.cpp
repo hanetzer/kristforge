@@ -16,12 +16,12 @@ int main() {
 	std::cout << "Using: " << miner << std::endl;
 	miner.runTests();
 	std::cout << "Tests passed" << std::endl;
-
-	std::shared_ptr<kristforge::MiningState> state(new kristforge::MiningState());
-	auto f = std::async(std::launch::async, [&]{ miner.mine("k5ztameslf", "000000000cad", 77120, state); });
-
-	f.wait_for(std::chrono::seconds(30));
-	state->stop();
-
-	std::cout << "Solution: " << (state->solutionFound() ? *state->getSolution() : "Unsolved") << std::endl;
+//
+//	std::shared_ptr<kristforge::MiningState> state(new kristforge::MiningState());
+//	auto f = std::async(std::launch::async, [&]{ miner.mine("k5ztameslf", "000000000cad", 77120, state); });
+//
+//	f.wait_for(std::chrono::seconds(30));
+//	state->stop();
+//
+//	std::cout << "Solution: " << (state->solutionFound() ? *state->getSolution() : "Unsolved") << std::endl;
 }

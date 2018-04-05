@@ -9,6 +9,7 @@
 #include <thread>
 #include <utility>
 #include <functional>
+#include <condition_variable>
 
 namespace kristforge {
 	/**
@@ -49,60 +50,80 @@ namespace kristforge {
 		const std::string message;
 	};
 
+	typedef std::array<char, 10> kristAddress;
+	typedef std::array<char, 12> blockShorthash;
+
 	class Miner;
 
 	/**
-	 * Represents a mining state. Can (and should) be used by multiple miners at once.
+	 * Represents a shared mining state, used to synchronize mining and network activity
 	 */
 	class MiningState {
 	public:
-		MiningState() = default;
+		explicit MiningState(kristAddress address, std::function<void(std::string)> solveCB) :
+				solveCB(std::move(solveCB)),
+				address(address) {};
 
 		MiningState(const MiningState &) = delete;
 
 		MiningState &operator=(const MiningState &) = delete;
 
 		/**
-		 * Gets the total number of hashes that have been checked
+		 * Signals miners to stop and terminate
 		 */
-		inline long getTotalHashes() const { return totalHashes; }
+		void stop();
 
 		/**
-		 * Whether mining is stopped
+		 * Removes the block, signalling miners to stop and wait for a new one
 		 */
-		inline bool isStopped() const { return stopFlag; }
+		void removeBlock();
 
 		/**
-		 * Signals that mining should be stopped
+		 * Sets the block, signalling miners to restart for this block
+		 * @param work The current work value
+		 * @param prevHeight The previous block height
+		 * @param prevBlock The previous block short hash
 		 */
-		inline bool stop() { stopFlag = true; }
-
-		/**
-		 * Whether a solution has been found
-		 */
-		inline bool solutionFound() const { return solved; }
-
-		/**
-		 * Gets the solution
-		 */
-		inline std::optional<std::string> getSolution() const { return solution; }
-
-		/**
-		 * Resets this state
-		 */
-		void reset() {
-			totalHashes = 0;
-			stopFlag = false;
-			solved = false;
-			solution = {};
-		}
+		void setBlock(long work, blockShorthash prevBlock);
 
 	private:
-		std::atomic<long> totalHashes = 0;
-		std::atomic<bool> stopFlag = false;
+		/**
+		 * The address to mine for
+		 */
+		const kristAddress address;
 
-		std::atomic<bool> solved = false;
-		std::optional<std::string> solution = {};
+		/**
+		 * The callback for solved blocks
+		 */
+		const std::function<void(std::string)> solveCB;
+
+		/**
+		 * If set, mining should be completely stopped
+		 */
+		std::atomic<bool> stopped = false;
+
+		/**
+		 * Whether the current block data is valid for mining
+		 */
+		std::atomic<bool> blockValid = false;
+
+		/**
+		 * A value that's incremented every time a new block is set, used for validation
+		 */
+		std::atomic<long> blockIndex = 0;
+
+		/**
+		 * The work value
+		 */
+		std::atomic<long> work = 0;
+
+		/**
+		 * The short hash of the previous block
+		 */
+		blockShorthash prevBlock = blockShorthash();
+
+		std::mutex mtx;
+		std::condition_variable cv;
 
 		friend Miner;
 	};
@@ -128,13 +149,12 @@ namespace kristforge {
 		inline const cl::Device getDevice() const { return dev; }
 
 		/**
-		 * Starts mining using this miner
-		 * @param address The address to mine for
-		 * @param block The latest block
-		 * @param work The work value
-		 * @param stateptr A mining state to synchronize mining events
+		 * Mines using this miner
+		 * @param state The shared mining state
 		 */
-		void mine(const char *address, const char *block, long work, std::shared_ptr<MiningState> stateptr);
+		void mine(std::shared_ptr<MiningState> state);
+
+//		void mine(const char *kristAddress, const char *block, long work, std::shared_ptr<MiningState> stateptr);
 
 	private:
 		const cl::Device dev;
@@ -150,37 +170,4 @@ namespace kristforge {
 	 * Writes a brief description of the miner, including the OpenCL device and platform name
 	 */
 	std::ostream &operator<<(std::ostream &os, const Miner &m);
-
-	class MinerPool {
-	public:
-		MinerPool(std::vector<Miner> miners,
-		          std::function<void(const std::string&)> solveCallback,
-		          std::string block,
-		          long work) : miners(std::move(miners)),
-                               solveCallback(solveCallback),
-		                       state(new MiningState()),
-		                       block(std::move(block)),
-		                       work(work) {};
-
-		/**
-		 * Signals miners to restart for the new block
-		 */
-		void blockChanged(const std::string &block, long work) {
-			this->block = block;
-			this->work = work;
-		}
-
-		/**
-		 * Runs all miners in this pool
-		 */
-		void run();
-
-	private:
-		const std::vector<Miner> miners;
-		const std::function<void(const std::string&)> solveCallback;
-		const std::shared_ptr<MiningState> state;
-
-		std::string block;
-		long work;
-	};
 }

@@ -95,6 +95,28 @@ std::optional<std::string> kristforge::getDeviceID(const cl::Device &dev) {
 	return std::optional<std::string>();
 }
 
+void kristforge::MiningState::stop() {
+	std::lock_guard<std::mutex> guard(mtx);
+	stopped = true;
+	blockValid = false;
+	cv.notify_all();
+}
+
+void kristforge::MiningState::removeBlock() {
+	std::lock_guard<std::mutex> guard(mtx);
+	blockValid = false;
+	cv.notify_all();
+}
+
+void kristforge::MiningState::setBlock(long work, blockShorthash prevBlock) {
+	std::lock_guard<std::mutex> guard(mtx);
+	this->work = work;
+	this->prevBlock = prevBlock;
+	blockIndex++;
+	blockValid = true;
+	cv.notify_all();
+}
+
 std::ostream &kristforge::operator<<(std::ostream &os, const kristforge::Miner &m) {
 	auto dev = m.getDevice();
 	auto devName = dev.getInfo<CL_DEVICE_NAME>();
@@ -152,55 +174,103 @@ void kristforge::Miner::runTests() const noexcept(false) {
 	}
 }
 
-void kristforge::Miner::mine(const char *address,
-                             const char *block,
-                             long work,
-                             std::shared_ptr<MiningState> state) {
-	cl::Kernel mine(program, "krist_miner");
-
-	char solution[34] = {0};
+void kristforge::Miner::mine(std::shared_ptr<MiningState> state) {
+	cl::Kernel kernel(program, "krist_miner");
 
 	// init buffers
 	cl::Buffer addressBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 10);
 	cl::Buffer blockBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 12);
 	cl::Buffer prefixBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 2);
-	cl::Buffer solutionBuf(ctx, CL_MEM_WRITE_ONLY, 34);
+	cl::Buffer solutionBuf(ctx, CL_MEM_READ_ONLY, 34);
 
-	// copy data to buffers
-	cmd.enqueueWriteBuffer(addressBuf, CL_FALSE, 0, 10, address);
-	cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, block);
+	// copy constant data to buffers
+	cmd.enqueueWriteBuffer(addressBuf, CL_FALSE, 0, 10, state->address.data());
 	cmd.enqueueWriteBuffer(prefixBuf, CL_FALSE, 0, 2, prefix.data());
-	cmd.enqueueWriteBuffer(solutionBuf, CL_FALSE, 0, 34, solution);
-	cmd.finish();
 
-	// set constant args
-	mine.setArg(0, addressBuf);
-	mine.setArg(1, blockBuf);
-	mine.setArg(2, prefixBuf);
-	mine.setArg(4, work);
-	mine.setArg(5, solutionBuf);
+	// set buffer args
+	kernel.setArg(0, addressBuf);
+	kernel.setArg(1, blockBuf);
+	kernel.setArg(2, prefixBuf);
+	kernel.setArg(5, solutionBuf);
 
-	// main mining loop
-	long offset;
-	for (offset = 0; !(state->stopFlag); offset += worksize, state->totalHashes += worksize) {
-		// update offset
-		mine.setArg(3, offset);
+	while (!(state->stopped)) {
+		if (!state->blockValid) {
+			std::unique_lock<std::mutex> lock(state->mtx);
+			state->cv.wait(lock, [&state] { return state->blockValid.load(); });
+		}
 
-		// invoke kernel, read result
-		cmd.enqueueNDRangeKernel(mine, 0, worksize);
-		cmd.enqueueReadBuffer(solutionBuf, CL_FALSE, 0, 34, solution);
-		cmd.finish();
+		// we have a valid block, start mining
+		const long index = state->blockIndex;
 
-		// solved
-		if (solution[0] != 0) {
-			state->solved = true;
-			state->solution = std::string(solution, 34);
+		// set inputs
+		cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, state->prevBlock.data());
+		kernel.setArg(4, state->work.load());
 
-			state->stop();
+		char solutionOut[34] = {0};
+
+		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += worksize) {
+			// set offset
+			kernel.setArg(3, offset);
+
+			// invoke kernel
+			cmd.enqueueNDRangeKernel(kernel, 0, worksize);
+			cmd.enqueueReadBuffer(solutionBuf, CL_FALSE, 0, 34, solutionOut);
+			cmd.finish();
+
+			// check for a valid solution
+			if (solutionOut[0] != 0) {
+				
+				break;
+			}
 		}
 	}
 }
 
-void kristforge::MinerPool::run() {
-
-}
+//void kristforge::Miner::mine(const char *kristAddress,
+//                             const char *block,
+//                             long work,
+//                             std::shared_ptr<MiningState> state) {
+////	cl::Kernel mine(program, "krist_miner");
+////
+////	char solution[34] = {0};
+////
+////	// init buffers
+////	cl::Buffer addressBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 10);
+////	cl::Buffer blockBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 12);
+////	cl::Buffer prefixBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 2);
+////	cl::Buffer solutionBuf(ctx, CL_MEM_WRITE_ONLY, 34);
+////
+////	// copy data to buffers
+////	cmd.enqueueWriteBuffer(addressBuf, CL_FALSE, 0, 10, address);
+////	cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, block);
+////	cmd.enqueueWriteBuffer(prefixBuf, CL_FALSE, 0, 2, prefix.data());
+////	cmd.enqueueWriteBuffer(solutionBuf, CL_FALSE, 0, 34, solution);
+////	cmd.finish();
+////
+////	// set constant args
+////	mine.setArg(0, addressBuf);
+////	mine.setArg(1, blockBuf);
+////	mine.setArg(2, prefixBuf);
+////	mine.setArg(4, work);
+////	mine.setArg(5, solutionBuf);
+////
+////	// main mining loop
+////	long offset;
+////	for (offset = 0; !(state->stopFlag); offset += worksize, state->totalHashes += worksize) {
+////		// update offset
+////		mine.setArg(3, offset);
+////
+////		// invoke kernel, read result
+////		cmd.enqueueNDRangeKernel(mine, 0, worksize);
+////		cmd.enqueueReadBuffer(solutionBuf, CL_FALSE, 0, 34, solution);
+////		cmd.finish();
+////
+////		// solved
+////		if (solution[0] != 0) {
+////			state->solved = true;
+////			state->solution = std::string(solution, 34);
+////
+////			state->stop();
+////		}
+////	}
+//}
