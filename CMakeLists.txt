@@ -12,3 +12,6 @@ target_link_libraries(kristforge ${OpenCL_LIBRARIES})
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(kristforge Threads::Threads)
+
+find_package(cpprestsdk REQUIRED)
+target_link_libraries(kristforge cpprestsdk::cpprest)

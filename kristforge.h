@@ -7,6 +7,8 @@
 #include <optional>
 #include <memory>
 #include <thread>
+#include <utility>
+#include <functional>
 
 namespace kristforge {
 	/**
@@ -63,31 +65,41 @@ namespace kristforge {
 		/**
 		 * Gets the total number of hashes that have been checked
 		 */
-		inline long getTotalHashes() { return totalHashes; }
+		inline long getTotalHashes() const { return totalHashes; }
 
 		/**
-		 * Whether mining is in progress
+		 * Whether mining is stopped
 		 */
-		inline bool isRunning() { return running; }
+		inline bool isStopped() const { return stopFlag; }
 
 		/**
 		 * Signals that mining should be stopped
 		 */
-		inline bool stop() { running = false; }
+		inline bool stop() { stopFlag = true; }
 
 		/**
 		 * Whether a solution has been found
 		 */
-		inline bool solutionFound() { return solved; }
+		inline bool solutionFound() const { return solved; }
 
 		/**
 		 * Gets the solution
 		 */
-		inline std::optional<std::string> getSolution() { return solution; }
+		inline std::optional<std::string> getSolution() const { return solution; }
+
+		/**
+		 * Resets this state
+		 */
+		void reset() {
+			totalHashes = 0;
+			stopFlag = false;
+			solved = false;
+			solution = {};
+		}
 
 	private:
 		std::atomic<long> totalHashes = 0;
-		std::atomic<bool> running = false;
+		std::atomic<bool> stopFlag = false;
 
 		std::atomic<bool> solved = false;
 		std::optional<std::string> solution = {};
@@ -122,7 +134,7 @@ namespace kristforge {
 		 * @param work The work value
 		 * @param stateptr A mining state to synchronize mining events
 		 */
-		void startMining(const char address[10], const char block[12], long work, std::shared_ptr<MiningState> stateptr);
+		void mine(const char *address, const char *block, long work, std::shared_ptr<MiningState> stateptr);
 
 	private:
 		const cl::Device dev;
@@ -138,4 +150,37 @@ namespace kristforge {
 	 * Writes a brief description of the miner, including the OpenCL device and platform name
 	 */
 	std::ostream &operator<<(std::ostream &os, const Miner &m);
+
+	class MinerPool {
+	public:
+		MinerPool(std::vector<Miner> miners,
+		          std::function<void(const std::string&)> solveCallback,
+		          std::string block,
+		          long work) : miners(std::move(miners)),
+                               solveCallback(solveCallback),
+		                       state(new MiningState()),
+		                       block(std::move(block)),
+		                       work(work) {};
+
+		/**
+		 * Signals miners to restart for the new block
+		 */
+		void blockChanged(const std::string &block, long work) {
+			this->block = block;
+			this->work = work;
+		}
+
+		/**
+		 * Runs all miners in this pool
+		 */
+		void run();
+
+	private:
+		const std::vector<Miner> miners;
+		const std::function<void(const std::string&)> solveCallback;
+		const std::shared_ptr<MiningState> state;
+
+		std::string block;
+		long work;
+	};
 }

@@ -152,10 +152,10 @@ void kristforge::Miner::runTests() const noexcept(false) {
 	}
 }
 
-void kristforge::Miner::startMining(const char address[10],
-                                    const char block[12],
-                                    long work,
-                                    std::shared_ptr<MiningState> state) {
+void kristforge::Miner::mine(const char *address,
+                             const char *block,
+                             long work,
+                             std::shared_ptr<MiningState> state) {
 	cl::Kernel mine(program, "krist_miner");
 
 	char solution[34] = {0};
@@ -182,7 +182,7 @@ void kristforge::Miner::startMining(const char address[10],
 
 	// main mining loop
 	long offset;
-	for (offset = 0, state->running = true; state->running; offset += worksize, state->totalHashes += worksize) {
+	for (offset = 0; !(state->stopFlag); offset += worksize, state->totalHashes += worksize) {
 		// update offset
 		mine.setArg(3, offset);
 
@@ -193,9 +193,14 @@ void kristforge::Miner::startMining(const char address[10],
 
 		// solved
 		if (solution[0] != 0) {
-			state->solution = std::string(solution, 34);
-			state->running = false;
 			state->solved = true;
+			state->solution = std::string(solution, 34);
+
+			state->stop();
 		}
 	}
+}
+
+void kristforge::MinerPool::run() {
+
 }
