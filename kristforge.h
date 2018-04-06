@@ -162,7 +162,7 @@ namespace kristforge {
 		/**
 		 * Creates a miner using the given OpenCL device
 		 */
-		explicit Miner(const cl::Device &dev, const char prefix[2], std::optional<long> worksize = {});
+		explicit Miner(const cl::Device &dev, std::array<char, 2> prefix, std::optional<long> worksize = {});
 
 		/**
 		 * Runs tests to ensure the OpenCL is working properly
@@ -175,12 +175,15 @@ namespace kristforge {
 		inline const cl::Device getDevice() const { return dev; }
 
 		/**
+		 * Gets the worksize used by this miner
+		 */
+		inline long getWorksize() const { return worksize; }
+
+		/**
 		 * Mines using this miner
 		 * @param state The shared mining state
 		 */
 		void mine(std::shared_ptr<MiningState> state);
-
-//		void mine(const char *kristAddress, const char *block, long work, std::shared_ptr<MiningState> stateptr);
 
 	private:
 		const cl::Device dev;
@@ -189,7 +192,7 @@ namespace kristforge {
 		const cl::Program program;
 
 		const long worksize;
-		const std::string prefix;
+		const std::array<char, 2> prefix;
 	};
 
 	/**

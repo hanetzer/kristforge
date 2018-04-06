@@ -177,7 +177,7 @@ std::ostream &kristforge::operator<<(std::ostream &os, const kristforge::Miner &
 	          << ")";
 }
 
-kristforge::Miner::Miner(const cl::Device &dev, const char prefix[2], const std::optional<long> worksize) :
+kristforge::Miner::Miner(const cl::Device &dev, std::array<char, 2> prefix, std::optional<long> worksize) :
 		dev(dev),
 		ctx(cl::Context(dev)),
 		cmd(cl::CommandQueue(ctx, dev)),
