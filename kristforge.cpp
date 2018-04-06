@@ -40,10 +40,26 @@ std::optional<cl::Device> kristforge::getBestDevice(const std::vector<cl::Device
 	}
 
 	if (!best()) {
-		return std::optional<cl::Device>();
+		return {};
 	}
 
 	return std::optional(best);
+}
+
+std::optional<cl::Device> kristforge::getDeviceByID(const std::string &id, const std::vector<cl::Device> &devs) {
+	cl::Device matching;
+
+	for (const cl::Device &d : devs) {
+		if (getDeviceID(d) == id) {
+			matching = d;
+		}
+	}
+
+	if (!matching()) {
+		return {};
+	}
+
+	return std::optional(matching);
 }
 
 cl::Program compileMiner(const cl::Context &ctx, const cl::Device &dev, const std::string &compileOpts = "") {
@@ -95,6 +111,21 @@ std::optional<std::string> kristforge::getDeviceID(const cl::Device &dev) {
 	return std::optional<std::string>();
 }
 
+template<int N>
+std::array<char, N> toArray(const std::string &from) {
+	if (from.size() != N) {
+		throw std::range_error("Length must equal " + std::to_string(N));
+	}
+
+	std::array<char, N> data = {};
+	std::copy(from.begin(), from.end(), data.begin());
+	return data;
+};
+
+kristforge::kristAddress kristforge::mkAddress(const std::string &from) { return toArray<10>(from); }
+
+kristforge::blockShorthash kristforge::mkBlockShorthash(const std::string &from) { return toArray<12>(from); }
+
 void kristforge::MiningState::stop() {
 	std::lock_guard<std::mutex> guard(mtx);
 	stopped = true;
@@ -115,6 +146,21 @@ void kristforge::MiningState::setBlock(long work, blockShorthash prevBlock) {
 	blockIndex++;
 	blockValid = true;
 	cv.notify_all();
+}
+
+void kristforge::MiningState::solved(const std::string &solution, const Miner &miner) {
+	{
+		std::lock_guard<std::mutex> guard(mtx);
+		blockValid = false;
+		cv.notify_all();
+	}
+
+	if (!solveCB(solution, miner)) {
+		// re-validate block
+		std::lock_guard<std::mutex> guard(mtx);
+		blockValid = true;
+		cv.notify_all();
+	}
 }
 
 std::ostream &kristforge::operator<<(std::ostream &os, const kristforge::Miner &m) {
@@ -208,7 +254,7 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) {
 
 		char solutionOut[34] = {0};
 
-		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += worksize) {
+		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += worksize, state->totalHashes += worksize) {
 			// set offset
 			kernel.setArg(3, offset);
 
@@ -219,58 +265,9 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) {
 
 			// check for a valid solution
 			if (solutionOut[0] != 0) {
-				
+				state->solved(std::string(solutionOut, 34), *this);
 				break;
 			}
 		}
 	}
 }
-
-//void kristforge::Miner::mine(const char *kristAddress,
-//                             const char *block,
-//                             long work,
-//                             std::shared_ptr<MiningState> state) {
-////	cl::Kernel mine(program, "krist_miner");
-////
-////	char solution[34] = {0};
-////
-////	// init buffers
-////	cl::Buffer addressBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 10);
-////	cl::Buffer blockBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 12);
-////	cl::Buffer prefixBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 2);
-////	cl::Buffer solutionBuf(ctx, CL_MEM_WRITE_ONLY, 34);
-////
-////	// copy data to buffers
-////	cmd.enqueueWriteBuffer(addressBuf, CL_FALSE, 0, 10, address);
-////	cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, block);
-////	cmd.enqueueWriteBuffer(prefixBuf, CL_FALSE, 0, 2, prefix.data());
-////	cmd.enqueueWriteBuffer(solutionBuf, CL_FALSE, 0, 34, solution);
-////	cmd.finish();
-////
-////	// set constant args
-////	mine.setArg(0, addressBuf);
-////	mine.setArg(1, blockBuf);
-////	mine.setArg(2, prefixBuf);
-////	mine.setArg(4, work);
-////	mine.setArg(5, solutionBuf);
-////
-////	// main mining loop
-////	long offset;
-////	for (offset = 0; !(state->stopFlag); offset += worksize, state->totalHashes += worksize) {
-////		// update offset
-////		mine.setArg(3, offset);
-////
-////		// invoke kernel, read result
-////		cmd.enqueueNDRangeKernel(mine, 0, worksize);
-////		cmd.enqueueReadBuffer(solutionBuf, CL_FALSE, 0, 34, solution);
-////		cmd.finish();
-////
-////		// solved
-////		if (solution[0] != 0) {
-////			state->solved = true;
-////			state->solution = std::string(solution, 34);
-////
-////			state->stop();
-////		}
-////	}
-//}

@@ -10,6 +10,7 @@
 #include <utility>
 #include <functional>
 #include <condition_variable>
+#include <stdexcept>
 
 namespace kristforge {
 	/**
@@ -33,6 +34,11 @@ namespace kristforge {
 	std::optional<cl::Device> getBestDevice(const std::vector<cl::Device> &devs = getAllDevices());
 
 	/**
+	 * Gets a device by ID
+	 */
+	std::optional<cl::Device> getDeviceByID(const std::string &id, const std::vector<cl::Device> &devs = getAllDevices());
+
+	/**
 	 * Gets a unique ID for this device, if supported
 	 */
 	std::optional<std::string> getDeviceID(const cl::Device &dev);
@@ -53,6 +59,22 @@ namespace kristforge {
 	typedef std::array<char, 10> kristAddress;
 	typedef std::array<char, 12> blockShorthash;
 
+	/**
+	 * Converts a string to a krist address
+	 * @param from The string
+	 * @return A krist address
+	 * @throws range_error when the input length isn't 10
+	 */
+	kristAddress mkAddress(const std::string &from) noexcept(false);
+
+	/**
+	 * Converts a string to a krist short block hash
+	 * @param from The string
+	 * @return A short block hash
+	 * @throws range_error when the input length isn't 12
+	 */
+	blockShorthash mkBlockShorthash(const std::string &from) noexcept(false);
+
 	class Miner;
 
 	/**
@@ -60,7 +82,7 @@ namespace kristforge {
 	 */
 	class MiningState {
 	public:
-		explicit MiningState(kristAddress address, std::function<void(std::string)> solveCB) :
+		explicit MiningState(kristAddress address, std::function<bool(const std::string &, const Miner &)> solveCB) :
 				solveCB(std::move(solveCB)),
 				address(address) {};
 
@@ -87,6 +109,8 @@ namespace kristforge {
 		void setBlock(long work, blockShorthash prevBlock);
 
 	private:
+		void solved(const std::string &solution, const Miner &miner);
+
 		/**
 		 * The address to mine for
 		 */
@@ -95,7 +119,7 @@ namespace kristforge {
 		/**
 		 * The callback for solved blocks
 		 */
-		const std::function<void(std::string)> solveCB;
+		const std::function<bool(const std::string &, const Miner &)> solveCB;
 
 		/**
 		 * If set, mining should be completely stopped
@@ -121,6 +145,8 @@ namespace kristforge {
 		 * The short hash of the previous block
 		 */
 		blockShorthash prevBlock = blockShorthash();
+
+		std::atomic<long> totalHashes = 0;
 
 		std::mutex mtx;
 		std::condition_variable cv;

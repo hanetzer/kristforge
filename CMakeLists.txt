@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(kristforge)
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules")
 set(CMAKE_CXX_STANDARD 17)
 
 add_executable(kristforge main.cpp kristforge.cpp kristforge.h kristforge_opencl.cpp cl_amd.h)
@@ -13,5 +14,5 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(kristforge Threads::Threads)
 
-find_package(cpprestsdk REQUIRED)
-target_link_libraries(kristforge cpprestsdk::cpprest)
+find_package(TCLAP REQUIRED)
+include_directories(${TCLAP_INCLUDE_DIR})
