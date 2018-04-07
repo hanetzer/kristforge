@@ -220,7 +220,7 @@ void kristforge::Miner::runTests() const noexcept(false) {
 	}
 }
 
-void kristforge::Miner::mine(std::shared_ptr<MiningState> state) {
+void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 	cl::Kernel kernel(program, "krist_miner");
 
 	// init buffers
@@ -251,6 +251,7 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) {
 		// set inputs
 		cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, state->prevBlock.data());
 		kernel.setArg(4, state->work.load());
+		cmd.finish();
 
 		char solutionOut[34] = {0};
 

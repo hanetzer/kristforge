@@ -108,6 +108,12 @@ namespace kristforge {
 		 */
 		void setBlock(long work, blockShorthash prevBlock);
 
+		inline void setBlock(long work, const std::string &prevBlock) { setBlock(work, mkBlockShorthash(prevBlock)); }
+
+		inline std::string getBlock() { return std::string(prevBlock.data(), 12); }
+
+		inline long getWork() { return work; }
+
 	private:
 		void solved(const std::string &solution, const Miner &miner);
 
@@ -183,7 +189,7 @@ namespace kristforge {
 		 * Mines using this miner
 		 * @param state The shared mining state
 		 */
-		void mine(std::shared_ptr<MiningState> state);
+		void mine(std::shared_ptr<MiningState> state) const;
 
 	private:
 		const cl::Device dev;

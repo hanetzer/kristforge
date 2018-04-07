@@ -10,6 +10,7 @@
 #include <curlpp/Options.hpp>
 #include <curlpp/cURLpp.hpp>
 #include <json/json.h>
+#include <uWS/uWS.h>
 
 class KristAddressConstraint : public TCLAP::Constraint<std::string> {
 public:
@@ -52,6 +53,27 @@ enum ErrorCodes {
 	NETWORK_ERROR = 4
 };
 
+std::string negotiateWebsocketConnection(std::string nodeURL, bool verbose = false) {
+	curlpp::Cleanup cleaner;
+	curlpp::Easy req;
+
+	req.setOpt(new curlpp::options::Url(nodeURL));
+	req.setOpt(new curlpp::options::Verbose(verbose));
+	req.setOpt(new curlpp::options::Post(true));
+
+	std::stringstream stream;
+	stream << req;
+
+	Json::Value root(stream.str());
+	stream >> root;
+
+	if (root["ok"].asBool()) {
+		return root["url"].asString();
+	} else {
+		throw kristforge::Error("Websocket negotiation failed: " + root["error"].asString());
+	}
+}
+
 int main(int argc, const char **argv) {
 	try {
 		TCLAP::CmdLine cmd("Mine krist using compatible OpenCL devices");
@@ -80,7 +102,7 @@ int main(int argc, const char **argv) {
 			}
 
 			for (const cl::Device &dev : kristforge::getAllDevices()) {
-				miners.emplace_back(dev, generatePrefix());
+				miners.emplace_back(dev, generatePrefix(), pow(2, 24));
 			}
 		} else {
 			for (const std::string &id : devicesArg) {
@@ -105,28 +127,79 @@ int main(int argc, const char **argv) {
 			std::cout << m << std::endl;
 		}
 
-		// start network stuff
-		std::string wsURL;
-		{
-			curlpp::Cleanup cleaner;
-			curlpp::Easy req;
+		// used for websocket conn later
+		uWS::Hub hub;
 
-			req.setOpt(new curlpp::options::Url(nodeArg.getValue()));
-			req.setOpt(new curlpp::options::Verbose(verboseArg.isSet()));
-			req.setOpt(new curlpp::options::Post(true));
+		// init shared mining state
+		std::shared_ptr<kristforge::MiningState> state(new kristforge::MiningState(
+				kristforge::mkAddress(addressArg.getValue()),
+				[&hub](const std::string &solution, const kristforge::Miner &miner) {
+					std::cout << "Solution " << solution << " found by " << miner << std::endl;
 
-			std::stringstream stream;
-			stream << req;
+					Json::Value root;
+					root["type"] = "submit_block";
+					root["address"] = solution.substr(0, 10);
+					root["nonce"] = solution.substr(22, 12);
 
-			Json::Value root(stream.str());
-			stream >> root;
+					static long id = 1;
+					root["id"] = id++;
 
-			if (root["ok"].asBool()) {
-				wsURL = root["url"].asString();
-			} else {
-				std::cerr << "Websocket negotiation refused: " << root["error"].asString() << std::endl;
-				return ErrorCodes::NETWORK_ERROR;
+					static std::unique_ptr<Json::StreamWriter> writer(Json::StreamWriterBuilder().newStreamWriter());
+					std::ostringstream ss;
+					writer->write(root, &ss);
+
+					std::cout << "Sending " << ss.str() << std::endl;
+					((uWS::Group<false>)hub).broadcast(ss.str().data(), ss.str().size(), uWS::OpCode::TEXT);
+
+					return true;
+				}));
+
+		// setup websocket callbacks
+		hub.onConnection([](uWS::WebSocket<false> *ws, uWS::HttpRequest req) {
+			std::cout << "Connected!" << std::endl;
+		});
+
+		hub.onDisconnection([&](uWS::WebSocket<false> *ws, int code, char *msg, size_t length) {
+			std::cout << "Disconnected - attempting to reconnect" << std::endl;
+			state->removeBlock();
+			hub.connect(negotiateWebsocketConnection(nodeArg.getValue(), verboseArg.getValue()));
+		});
+
+		//192.99.175.37: {"type":"event","event":"block","block":{"height":471070,"address":"kmqc25jc9z","hash":"000000006ef7e42bd78a362936d105ac91d2c776c11b3daa92fc337bc7856a30","short_hash":"000000006ef7","value":1,"time":"2018-04-07T02:11:23.750Z","difficulty":50911},"new_work":49866}
+		hub.onMessage([&](uWS::WebSocket<false> *ws, char *msg, size_t length, uWS::OpCode opCode) {
+			if (verboseArg.isSet()) {
+				std::cout << ws->getAddress().address << ": " << std::string(msg, length) << std::endl;
 			}
+
+			Json::Value root;
+			std::stringstream(std::string(msg, length)) >> root;
+
+			std::string type = root["type"].asString();
+
+			if (type == "event") {
+				std::string evt = root["event"].asString();
+
+				if (evt == "block") {
+					state->setBlock(root["new_work"].asInt64(), root["block"]["short_hash"].asString());
+					std::cout << "Latest block: " << state->getBlock() << std::endl;
+				}
+			} else if (type == "hello") {
+				state->setBlock(root["work"].asInt64(), root["last_block"]["short_hash"].asString());
+				std::cout << "Latest block: " << state->getBlock() << std::endl;
+			}
+		});
+
+		std::vector<std::thread> threads;
+
+		for (const kristforge::Miner &m : miners) {
+			threads.emplace_back([&]{ m.mine(state); });
+		}
+
+		hub.connect(negotiateWebsocketConnection(nodeArg.getValue(), verboseArg.getValue()));
+		hub.getLoop()->run();
+
+		for (std::thread &t : threads) {
+			t.join();
 		}
 
 	} catch (TCLAP::ArgException &e) {
