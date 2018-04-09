@@ -187,6 +187,8 @@ void testScore(__global uchar *hash, __global long *scores) {
 	vstore(score, 0, scores);
 }
 
+__constant uc offset = (uc)(0, 1, 2, 3);
+
 __kernel
 __attribute__((vec_type_hint(ui)))
 void krist_miner(
@@ -215,7 +217,14 @@ void krist_miner(
 	for (i = 22; i < 24; i++) input[i] = prefix[i - 22];
 
 #pragma unroll
-	for (i = 24; i < 34; i++) input[i] = ((nonce >> ((i - 24) * 5)) & 31) + 48;
+	for (i = 24; i < 34; i++) {
+
+#if VECSIZE == 2 || VECSIZE == 4
+		input[i] = (uc)(((nonce >> ((i - 24) * 5)) & 31) + 48) + offset;
+#else
+		input[i] = (uc)(((nonce >> ((i - 24) * 5)) & 31) + 48);
+#endif
+	}
 
 	// hash it
 	digest55(input, 34, hashed);
@@ -232,7 +241,7 @@ void krist_miner(
 		for (i = 2; i < 12; i++) solution[i] = ((nonce >> ((i - 2) * 5)) & 31) + 48;
 	}
 #elif VECSIZE == 2
-// meh no one cares about vec2s
+	// meh no one cares about vec2s
 #elif VECSIZE == 4
 	if (any(score_hash(hashed) < work)) {
 #pragma unroll
@@ -250,7 +259,7 @@ void krist_miner(
 				extracted[i] = extractor.component[n];
 			}
 
-			if (score_hash_scalar(extracted < work) {
+			if (score_hash_scalar(extracted) < work) {
 				// copy data to output
 #pragma unroll
 				for (i = 0; i < 2; i++) solution[i] = prefix[i];
