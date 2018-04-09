@@ -16,9 +16,18 @@ bool kristforge::isCompatible(const cl::Device &dev) {
 }
 
 std::vector<cl::Device> kristforge::getAllDevices() {
-	// all devices from default platform
 	std::vector<cl::Device> devs;
-	cl::Platform::getDefault().getDevices(CL_DEVICE_TYPE_ALL, &devs);
+	std::vector<cl::Platform> platforms;
+	cl::Platform::get(&platforms);
+
+	for (const auto& p: platforms) {
+		std::vector<cl::Device> tmpDevs;
+		p.getDevices(CL_DEVICE_TYPE_ALL, &tmpDevs);
+
+		for (const auto &d : tmpDevs) {
+			devs.push_back(d);
+		}
+	}
 
 	// remove incompatible devices
 	std::remove_if(devs.begin(), devs.end(), [](const cl::Device &d) { return !isCompatible(d); });
@@ -62,14 +71,30 @@ std::optional<cl::Device> kristforge::getDeviceByID(const std::string &id, const
 	return std::optional(matching);
 }
 
-cl::Program compileMiner(const cl::Context &ctx, const cl::Device &dev, const std::string &compileOpts = "") {
+std::string getCompileOpts(const cl::Device &dev) {
+	std::string exts = dev.getInfo<CL_DEVICE_EXTENSIONS>();
+
+	std::stringstream opts;
+
+	if (exts.find("cl_amd_media_ops") != std::string::npos) {
+		opts << "-D BITALIGN ";
+	}
+
+	return opts.str();
+}
+
+cl::Program compileMiner(const cl::Context &ctx, const cl::Device &dev, std::optional<std::string> compileOpts = {}) {
+	if (!compileOpts) {
+		compileOpts = getCompileOpts(dev);
+	}
+
 	cl::Program program(ctx, openclSource, false);
 
 	std::vector<cl::Device> devs;
 	devs.push_back(dev);
 
 	try {
-		program.build(devs, compileOpts.data());
+		program.build(devs, compileOpts->data());
 	} catch (const cl::Error &e) {
 		if (e.err() == CL_BUILD_PROGRAM_FAILURE &&
 		    program.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev) == CL_BUILD_ERROR) {

@@ -74,6 +74,7 @@ int main(int argc, const char **argv) {
 		// @formatter:off
 		TCLAP::UnlabeledValueArg<std::string> addressArg("address", "The krist address to mine for", false, "k5ztameslf", new KristAddressConstraint, cmd);
 		TCLAP::SwitchArg allDevicesArg("a", "all-devices", "Specifies that all compatible devices should be used to mine", cmd);
+		TCLAP::SwitchArg bestDeviceArg("b", "best-device", "Specifices that the best compatible device should be used to mine", cmd);
 		TCLAP::MultiArg<std::string> devicesArg("d", "device", "Specifies that the given device should be used to mine", false, "device id", cmd);
 		TCLAP::SwitchArg listDevicesArg("l", "list-devices", "Display a list of compatible devices and their IDs", cmd);
 		TCLAP::ValueArg<std::string> nodeArg("n", "node", "Specifies which krist node to connect to", false, "https://krist.ceriat.net/ws/start", "krist node url", cmd);
@@ -88,26 +89,32 @@ int main(int argc, const char **argv) {
 		}
 
 		std::vector<kristforge::Miner> miners;
-		if (allDevicesArg.isSet()) {
-			if (devicesArg.isSet()) {
-				std::cerr << "-a cannot be used with -d" << std::endl;
-				return ErrorCodes::INVALID_ARGS;
-			}
 
+		if (allDevicesArg.isSet()) {
 			for (const cl::Device &dev : kristforge::getAllDevices()) {
 				miners.emplace_back(dev, generatePrefix());
 			}
-		} else {
-			for (const std::string &id : devicesArg) {
-				auto dev = kristforge::getDeviceByID(id);
+		}
 
-				if (!dev) {
-					std::cerr << "Unknown device ID: " << id << std::endl;
-					return ErrorCodes::INVALID_ARGS;
-				}
+		if (bestDeviceArg.isSet()) {
+			auto best = kristforge::getBestDevice();
 
-				miners.emplace_back(*dev, generatePrefix());
+			if (!best) {
+				std::cerr << "No available devices" << std::endl;
 			}
+
+			miners.emplace_back(*best, generatePrefix());
+		}
+
+		for (const std::string &id : devicesArg) {
+			auto dev = kristforge::getDeviceByID(id);
+
+			if (!dev) {
+				std::cerr << "Unknown device ID: " << id << std::endl;
+				return ErrorCodes::INVALID_ARGS;
+			}
+
+			miners.emplace_back(*dev, generatePrefix());
 		}
 
 		if (miners.empty()) {

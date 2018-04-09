@@ -1,6 +1,11 @@
 const char openclSource[] = R"ocl(
 // right rotate macro
-#define RR(x, y) rotate((uint)(x), -((uint)(y)))
+#ifdef BITALIGN
+	#pragma OPENCL EXTENSION cl_amd_media_ops : enable
+	#define RR(x, y) amd_bitalign((uint)x, (uint)x, (uint)y)
+#else
+	#define RR(x, y) rotate((uint)(x), -((uint)(y)))
+#endif
 
 // initial hash values
 #define H0 0x6a09e667
