@@ -187,7 +187,7 @@ void testScore(__global uchar *hash, __global long *scores) {
 	vstore(score, 0, scores);
 }
 
-__constant uc offset = (uc)(0, 1, 2, 3);
+__constant l offset = (l)(0, 1, 2, 3);
 
 __kernel
 __attribute__((vec_type_hint(ui)))
@@ -220,9 +220,9 @@ void krist_miner(
 	for (i = 24; i < 34; i++) {
 
 #if VECSIZE == 2 || VECSIZE == 4
-		input[i] = (uc)(((nonce >> ((i - 24) * 5)) & 31) + 48) + offset;
+		input[i] = convert_uc((l)(((nonce >> ((i - 24) * 5)) & 31) + 48) + offset);
 #else
-		input[i] = (uc)(((nonce >> ((i - 24) * 5)) & 31) + 48);
+		input[i] = ((nonce >> ((i - 24) * 5)) & 31) + 48;
 #endif
 	}
 
