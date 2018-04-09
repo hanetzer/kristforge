@@ -156,10 +156,13 @@ void kristforge::MiningState::solved(const std::string &solution, const Miner &m
 	}
 
 	if (!solveCB(solution, miner)) {
-		// re-validate block
+		// failed
 		std::lock_guard<std::mutex> guard(mtx);
 		blockValid = true;
 		cv.notify_all();
+	} else {
+		// success
+		numSolved++;
 	}
 }
 
@@ -177,12 +180,23 @@ std::ostream &kristforge::operator<<(std::ostream &os, const kristforge::Miner &
 	          << ")";
 }
 
+long optimalWorksize(const cl::Device &dev) {
+	long value = 1;
+	std::vector<size_t> sizes = dev.getInfo<CL_DEVICE_MAX_WORK_ITEM_SIZES>();
+
+	for (const size_t s : sizes) {
+		value *= s;
+	}
+
+	return value;
+}
+
 kristforge::Miner::Miner(const cl::Device &dev, std::array<char, 2> prefix, std::optional<long> worksize) :
 		dev(dev),
 		ctx(cl::Context(dev)),
 		cmd(cl::CommandQueue(ctx, dev)),
 		program(compileMiner(ctx, dev)),
-		worksize(worksize ? *worksize : 1), // todo: actually calculate a work size here
+		worksize(worksize ? *worksize : optimalWorksize(dev)),
 		prefix(prefix) {}
 
 const char hex[] = "0123456789abcdef";
@@ -245,15 +259,18 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 			state->cv.wait(lock, [&state] { return state->blockValid.load(); });
 		}
 
+//		if (!state->blockValid) continue;
+
 		// we have a valid block, start mining
 		const long index = state->blockIndex;
 
+		char solutionOut[34] = {0};
+
 		// set inputs
 		cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, state->prevBlock.data());
+		cmd.enqueueWriteBuffer(solutionBuf, CL_FALSE, 0, 34, solutionOut);
 		kernel.setArg(4, state->work.load());
 		cmd.finish();
-
-		char solutionOut[34] = {0};
 
 		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += worksize, state->totalHashes += worksize) {
 			// set offset

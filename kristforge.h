@@ -114,6 +114,10 @@ namespace kristforge {
 
 		inline long getWork() { return work; }
 
+		inline long getTotalHashes() { return totalHashes; }
+
+		inline long getTotalSolved() { return numSolved; }
+
 	private:
 		void solved(const std::string &solution, const Miner &miner);
 
@@ -152,7 +156,16 @@ namespace kristforge {
 		 */
 		blockShorthash prevBlock = blockShorthash();
 
+		/**
+		 * Total hashes checked
+		 */
 		std::atomic<long> totalHashes = 0;
+
+		/**
+		 * Total blocks solved
+		 * (hahahah like it will ever need a long)
+		 */
+		std::atomic<long> numSolved = 0;
 
 		std::mutex mtx;
 		std::condition_variable cv;

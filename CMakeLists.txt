@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(kristforge main.cpp kristforge.cpp kristforge.h kristforge_opencl.cpp cl_amd.h)
+add_executable(kristforge main.cpp kristforge.cpp kristforge.h kristforge_opencl.cpp cl_amd.h krist.cpp krist.h)
 
 find_package(OpenCL REQUIRED)
 target_include_directories(kristforge PUBLIC ${OpenCL_INCLUDE_DIR})

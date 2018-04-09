@@ -11,6 +11,9 @@
 #include <curlpp/cURLpp.hpp>
 #include <json/json.h>
 #include <uWS/uWS.h>
+#include "krist.h"
+#include <cmath>
+#include <iomanip>
 
 class KristAddressConstraint : public TCLAP::Constraint<std::string> {
 public:
@@ -53,25 +56,15 @@ enum ErrorCodes {
 	NETWORK_ERROR = 4
 };
 
-std::string negotiateWebsocketConnection(std::string nodeURL, bool verbose = false) {
-	curlpp::Cleanup cleaner;
-	curlpp::Easy req;
+std::string formatHashrate(long hashesPerSecond) {
+	static const char *suffixes[] = { "h/s", "kh/s", "Mh/s", "Gh/s", "Th/s", "Ph/s", "Eh/s" };
 
-	req.setOpt(new curlpp::options::Url(nodeURL));
-	req.setOpt(new curlpp::options::Verbose(verbose));
-	req.setOpt(new curlpp::options::Post(true));
+	auto scale = std::max(0, static_cast<int>(0, log(hashesPerSecond) / log(1000)));
+	double value = hashesPerSecond / pow(1000, scale);
 
-	std::stringstream stream;
-	stream << req;
-
-	Json::Value root(stream.str());
-	stream >> root;
-
-	if (root["ok"].asBool()) {
-		return root["url"].asString();
-	} else {
-		throw kristforge::Error("Websocket negotiation failed: " + root["error"].asString());
-	}
+	std::stringstream out;
+	out << std::fixed << std::setprecision(2) << value << " " << suffixes[scale];
+	return out.str();
 }
 
 int main(int argc, const char **argv) {
@@ -102,7 +95,7 @@ int main(int argc, const char **argv) {
 			}
 
 			for (const cl::Device &dev : kristforge::getAllDevices()) {
-				miners.emplace_back(dev, generatePrefix(), pow(2, 24));
+				miners.emplace_back(dev, generatePrefix());
 			}
 		} else {
 			for (const std::string &id : devicesArg) {
@@ -127,80 +120,42 @@ int main(int argc, const char **argv) {
 			std::cout << m << std::endl;
 		}
 
-		// used for websocket conn later
-		uWS::Hub hub;
+		krist::MiningComms *comms;
 
 		// init shared mining state
 		std::shared_ptr<kristforge::MiningState> state(new kristforge::MiningState(
 				kristforge::mkAddress(addressArg.getValue()),
-				[&hub](const std::string &solution, const kristforge::Miner &miner) {
+				[&](const std::string &solution, const kristforge::Miner &miner) {
 					std::cout << "Solution " << solution << " found by " << miner << std::endl;
-
-					Json::Value root;
-					root["type"] = "submit_block";
-					root["address"] = solution.substr(0, 10);
-					root["nonce"] = solution.substr(22, 12);
-
-					static long id = 1;
-					root["id"] = id++;
-
-					static std::unique_ptr<Json::StreamWriter> writer(Json::StreamWriterBuilder().newStreamWriter());
-					std::ostringstream ss;
-					writer->write(root, &ss);
-
-					std::cout << "Sending " << ss.str() << std::endl;
-					((uWS::Group<false>)hub).broadcast(ss.str().data(), ss.str().size(), uWS::OpCode::TEXT);
-
-					return true;
+					return comms->submitSolution(solution)->get_future().get();
 				}));
 
-		// setup websocket callbacks
-		hub.onConnection([](uWS::WebSocket<false> *ws, uWS::HttpRequest req) {
-			std::cout << "Connected!" << std::endl;
-		});
-
-		hub.onDisconnection([&](uWS::WebSocket<false> *ws, int code, char *msg, size_t length) {
-			std::cout << "Disconnected - attempting to reconnect" << std::endl;
-			state->removeBlock();
-			hub.connect(negotiateWebsocketConnection(nodeArg.getValue(), verboseArg.getValue()));
-		});
-
-		//192.99.175.37: {"type":"event","event":"block","block":{"height":471070,"address":"kmqc25jc9z","hash":"000000006ef7e42bd78a362936d105ac91d2c776c11b3daa92fc337bc7856a30","short_hash":"000000006ef7","value":1,"time":"2018-04-07T02:11:23.750Z","difficulty":50911},"new_work":49866}
-		hub.onMessage([&](uWS::WebSocket<false> *ws, char *msg, size_t length, uWS::OpCode opCode) {
-			if (verboseArg.isSet()) {
-				std::cout << ws->getAddress().address << ": " << std::string(msg, length) << std::endl;
-			}
-
-			Json::Value root;
-			std::stringstream(std::string(msg, length)) >> root;
-
-			std::string type = root["type"].asString();
-
-			if (type == "event") {
-				std::string evt = root["event"].asString();
-
-				if (evt == "block") {
-					state->setBlock(root["new_work"].asInt64(), root["block"]["short_hash"].asString());
-					std::cout << "Latest block: " << state->getBlock() << std::endl;
-				}
-			} else if (type == "hello") {
-				state->setBlock(root["work"].asInt64(), root["last_block"]["short_hash"].asString());
-				std::cout << "Latest block: " << state->getBlock() << std::endl;
-			}
-		});
+		comms = new krist::MiningComms(nodeArg.getValue(), state, verboseArg.getValue());
 
 		std::vector<std::thread> threads;
 
 		for (const kristforge::Miner &m : miners) {
-			threads.emplace_back([&]{ m.mine(state); });
+			threads.emplace_back([&] { m.mine(state); });
 		}
 
-		hub.connect(negotiateWebsocketConnection(nodeArg.getValue(), verboseArg.getValue()));
-		hub.getLoop()->run();
+		std::thread statusThread([state]{
+			for (long hashes = 0; true; hashes = state->getTotalHashes()) {
+				std::this_thread::sleep_for(std::chrono::seconds(3));
+				long diff = state->getTotalHashes() - hashes;
+
+				std::cout << "Speed: " << formatHashrate(diff / 3) << " Solved: " << state->getTotalSolved() << std::endl;
+			}
+		});
+
+		comms->run();
 
 		for (std::thread &t : threads) {
 			t.join();
 		}
+
+		statusThread.detach();
+
+		delete comms;
 
 	} catch (TCLAP::ArgException &e) {
 		std::cerr << "Error " << e.error() << " for arg " << e.argId() << std::endl;
