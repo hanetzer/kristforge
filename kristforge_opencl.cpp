@@ -1,10 +1,45 @@
 const char openclSource[] = R"ocl(
+#ifdef VEC4
+	typedef uint4 ui;
+	typedef uchar4 uc;
+	typedef long4 l;
+
+	#define convert_ui(x) convert_uint4(x)
+	#define convert_uc(x) convert_uchar4(x)
+	#define convert_l(x) convert_long4(x)
+
+	#define vload_uc(x, y) vload4((x), (y))
+	#define vstore_uc(x, y, z) vstore4((x), (y), (z))
+#elif defined(VEC2)
+	typedef uint2 ui;
+	typedef uchar2 uc;
+	typedef long2 l;
+
+	#define convert_ui(x) convert_uint2(x)
+	#define convert_uc(x) convert_uchar2(x)
+	#define convert_l(x) convert_long2(x)
+
+	#define vload_uc(x, y) vload2((x), (y))
+	#define vstore_uc(x, y, z) vstore2((x), (y), (z))
+#else
+	typedef uint ui;
+	typedef uchar uc;
+	typedef long l;
+
+	#define convert_ui(x) convert_uint(x)
+	#define convert_uc(x) convert_uchar(x)
+	#define convert_l(x) convert_long(x)
+
+	#define vload_uc(x, y) (y)[(x)]
+	#define vstore_uc(x, y, z) (z)[(y)] = (x)
+#endif
+
 // right rotate macro
 #ifdef BITALIGN
 	#pragma OPENCL EXTENSION cl_amd_media_ops : enable
-	#define RR(x, y) amd_bitalign((uint)x, (uint)x, (uint)y)
+	#define RR(x, y) amd_bitalign((ui)x, (ui)x, (ui)y)
 #else
-	#define RR(x, y) rotate((uint)(x), -((uint)(y)))
+	#define RR(x, y) rotate((ui)(x), -((ui)(y)))
 #endif
 
 // initial hash values
@@ -35,12 +70,16 @@ __constant uint K[64] = {
 	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
 	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
 
-void sha256_transform(uchar *data, uint *H) {
-	uint a, b, c, d, e, f, g, h, i, t1, t2, m[64];
+void sha256_transform(uc *data, ui *H) {
+	int i;
+	ui a, b, c, d, e, f, g, h, t1, t2, m[64];
 
 #pragma unroll
-	for (i = 0; i < 16; i++)
-		m[i] = (data[i*4] << 24) | (data[i*4+1] << 16) | (data[i*4+2] << 8) | (data[i*4+3]);
+	for (i = 0; i < 16; i++) {
+		m[i] = (convert_ui(data[i*4]) << 24) | (convert_ui(data[i*4+1]) << 16) | (convert_ui(data[i*4+2]) << 8) | convert_ui(data[i*4+3]);
+		//printf("%v4i\n", m[i]);
+		//printf("%i\n", m[i]);
+	}
 
 #pragma unroll
 	for (i = 16; i < 64; i++)
@@ -78,20 +117,20 @@ void sha256_transform(uchar *data, uint *H) {
 	H[7] += h;
 }
 
-void sha256_finish(uint *H, uchar *hash) {
+void sha256_finish(ui *H, uc *hash) {
 	int i, l;
 
 #pragma unroll
 	for (i = 0; i < 4; i++) {
 		l = 24 - i * 8;
-		hash[i]      = (H[0] >> l) & 0x000000ff;
-		hash[i + 4]  = (H[1] >> l) & 0x000000ff;
-		hash[i + 8]  = (H[2] >> l) & 0x000000ff;
-		hash[i + 12] = (H[3] >> l) & 0x000000ff;
-		hash[i + 16] = (H[4] >> l) & 0x000000ff;
-		hash[i + 20] = (H[5] >> l) & 0x000000ff;
-		hash[i + 24] = (H[6] >> l) & 0x000000ff;
-		hash[i + 28] = (H[7] >> l) & 0x000000ff;
+		hash[i]      = convert_uc((H[0] >> l) & 0x000000ff);
+		hash[i + 4]  = convert_uc((H[1] >> l) & 0x000000ff);
+		hash[i + 8]  = convert_uc((H[2] >> l) & 0x000000ff);
+		hash[i + 12] = convert_uc((H[3] >> l) & 0x000000ff);
+		hash[i + 16] = convert_uc((H[4] >> l) & 0x000000ff);
+		hash[i + 20] = convert_uc((H[5] >> l) & 0x000000ff);
+		hash[i + 24] = convert_uc((H[6] >> l) & 0x000000ff);
+		hash[i + 28] = convert_uc((H[7] >> l) & 0x000000ff);
 	}
 }
 
@@ -99,14 +138,14 @@ void sha256_finish(uint *H, uchar *hash) {
 // uchar data[64] - input bytes - will be modified
 // uint inputLen - input length (in bytes)
 // uchar hash[32] - output bytes - will be modified
-void digest55(uchar *data, uint inputLen, uchar *hash) {
+void digest55(uc *data, uint inputLen, uc *hash) {
 	// pad input
 	data[inputLen] = 0x80;
 	data[62] = (inputLen * 8) >> 8;
 	data[63] = inputLen * 8;
 
 	// init hash state
-	uint H[8] = { H0, H1, H2, H3, H4, H5, H6, H7 };
+	ui H[8] = { H0, H1, H2, H3, H4, H5, H6, H7 };
 
 	// transform
 	sha256_transform(data, H);
@@ -115,23 +154,27 @@ void digest55(uchar *data, uint inputLen, uchar *hash) {
 	sha256_finish(H, hash);
 }
 
-__kernel void testDigest55(__global uchar *input, uint len, __global uchar *output) {
-	uchar in[64], out[32];
+__kernel
+__attribute__((vec_type_hint(ui)))
+void testDigest55(__global uchar *input, uint len, __global uchar *output) {
+	uc in[64], out[32];
 
 #pragma unroll
-	for (int i = 0; i < 64; i++) in[i] = input[i];
+	for (int i = 0; i < 64; i++) in[i] = vload_uc(i, input);
 
 	digest55(in, len, out);
 
 #pragma unroll
-	for (int i = 0; i < 32; i++) output[i] = out[i];
+	for (int i = 0; i < 32; i++) vstore_uc(out[i], i, output);
 }
 
-long score_hash(uchar *hash) {
-	return hash[5] + (hash[4] << 8) + (hash[3] << 16) + ((long)hash[2] << 24) + ((long) hash[1] << 32) + ((long) hash[0] << 40);
+l score_hash(uc *hash) {
+	return convert_l(hash[5]) + convert_l(hash[4] << 8) + convert_l(hash[3] << 16) + (convert_l(hash[2]) << 24) + (convert_l(hash[1]) << 32) + (convert_l(hash[0]) << 40);
 }
 
-__kernel void krist_miner(
+__kernel
+__attribute__((vec_type_hint(ui)))
+void krist_miner(
 	__global const uchar *kristAddress,  // 10 bytes
 	__global const uchar *block,    // 12 bytes
 	__global const uchar *prefix,   // 2 bytes
@@ -144,7 +187,7 @@ __kernel void krist_miner(
 	uchar input[64];
 	uchar hashed[32];
 	int i;
-
+/*
 	// copy data to input
 
 #pragma unroll
@@ -171,6 +214,6 @@ __kernel void krist_miner(
 #pragma unroll
 		for (i = 2; i < 12; i++) solution[i] = ((nonce >> ((i - 2) * 5)) & 31) + 48;
 	}
-
+*/
 }
 )ocl";

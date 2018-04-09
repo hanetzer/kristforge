@@ -6,6 +6,7 @@
 #include <sstream>
 #include <cmath>
 #include <iostream>
+#include <CL/cl_platform.h>
 
 long kristforge::scoreDevice(const cl::Device &dev) {
 	return dev.getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>() * dev.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
@@ -20,7 +21,7 @@ std::vector<cl::Device> kristforge::getAllDevices() {
 	std::vector<cl::Platform> platforms;
 	cl::Platform::get(&platforms);
 
-	for (const auto& p: platforms) {
+	for (const auto &p: platforms) {
 		std::vector<cl::Device> tmpDevs;
 		p.getDevices(CL_DEVICE_TYPE_ALL, &tmpDevs);
 
@@ -69,46 +70,6 @@ std::optional<cl::Device> kristforge::getDeviceByID(const std::string &id, const
 	}
 
 	return std::optional(matching);
-}
-
-std::string getCompileOpts(const cl::Device &dev) {
-	std::string exts = dev.getInfo<CL_DEVICE_EXTENSIONS>();
-
-	std::stringstream opts;
-
-	if (exts.find("cl_amd_media_ops") != std::string::npos) {
-		opts << "-D BITALIGN ";
-	}
-
-	return opts.str();
-}
-
-cl::Program compileMiner(const cl::Context &ctx, const cl::Device &dev, std::optional<std::string> compileOpts = {}) {
-	if (!compileOpts) {
-		compileOpts = getCompileOpts(dev);
-	}
-
-	cl::Program program(ctx, openclSource, false);
-
-	std::vector<cl::Device> devs;
-	devs.push_back(dev);
-
-	try {
-		program.build(devs, compileOpts->data());
-	} catch (const cl::Error &e) {
-		if (e.err() == CL_BUILD_PROGRAM_FAILURE &&
-		    program.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev) == CL_BUILD_ERROR) {
-
-			// compilation error - get log and throw error
-			std::string log = program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(dev);
-			throw kristforge::Error("OpenCL Compilation Error:\n" + log);
-		} else {
-			throw e;
-		}
-	}
-
-	// compilation successful
-	return program;
 }
 
 std::optional<std::string> kristforge::getDeviceID(const cl::Device &dev) {
@@ -216,13 +177,40 @@ long optimalWorksize(const cl::Device &dev) {
 	return value;
 }
 
-kristforge::Miner::Miner(const cl::Device &dev, std::array<char, 2> prefix, std::optional<long> worksize) :
+kristforge::Miner::Miner(const cl::Device &dev, std::array<char, 2> prefix, int vecsize, std::optional<long> worksize) :
 		dev(dev),
 		ctx(cl::Context(dev)),
 		cmd(cl::CommandQueue(ctx, dev)),
-		program(compileMiner(ctx, dev)),
+		program(cl::Program(ctx, openclSource, false)),
 		worksize(worksize ? *worksize : optimalWorksize(dev)),
-		prefix(prefix) {}
+		vecsize(vecsize),
+		prefix(prefix) {
+
+	std::stringstream opts; // opencl compilation options
+
+	std::string exts = dev.getInfo<CL_DEVICE_EXTENSIONS>();
+	if (exts.find("cl_amd_media_ops") != std::string::npos) opts << "-D BITALIGN ";
+
+	opts << "-D VEC" << std::to_string(this->vecsize)
+	     << " -D VECSIZE=" << std::to_string(this->vecsize)
+	     << " -D WORKSIZE=" << std::to_string(this->worksize) << " ";
+
+	try {
+		std::vector<cl::Device> devs(1, dev);
+		std::string compileOpts = opts.str();
+		program.build(devs, compileOpts.data());
+	} catch (const cl::Error &e) {
+		if (e.err() == CL_BUILD_PROGRAM_FAILURE &&
+		    program.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev) == CL_BUILD_ERROR) {
+
+			// compilation error - get log and throw error
+			std::string log = program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(dev);
+			throw kristforge::Error("OpenCL Compilation Error:\n" + log);
+		} else {
+			throw e;
+		}
+	}
+}
 
 const char hex[] = "0123456789abcdef";
 
@@ -239,23 +227,70 @@ std::string toHex(const unsigned char *data, size_t dataSize) {
 
 void kristforge::Miner::runTests() const noexcept(false) {
 	cl::Kernel testDigest55(program, "testDigest55");
-	unsigned char inData[64] = "abc", outData[32];
 
-	cl::Buffer input(ctx, CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY, sizeof(inData));
-	cl::Buffer output(ctx, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY, sizeof(outData));
+	if (vecsize == 4) {
+		std::string strs[] = {"abc", "def", "ghi", "jkl"};
+		std::string hashes[] = {
+				"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+				"cb8379ac2098aa165029e3938a51da0bcecfc008fd6795f401178647f96c5b34",
+				"50ae61e841fac4e8f9e40baf2ad36ec868922ea48368c18f9535e47db56dd7fb",
+				"268f277c6d766d31334fda0f7a5533a185598d269e61c76a805870244828a5f1"
+		};
 
-	testDigest55.setArg(0, input); // input data
-	testDigest55.setArg(1, 3); // input length
-	testDigest55.setArg(2, output); // output
+		unsigned char inData[64 * 4] = {0}, outData[32 * 4];
 
-	cmd.enqueueWriteBuffer(input, CL_FALSE, 0, sizeof(inData), inData);
-	cmd.enqueueTask(testDigest55);
-	cmd.enqueueReadBuffer(output, CL_FALSE, 0, sizeof(outData), outData);
-	cmd.finish();
+		// interleave the data so that it can be loaded properly
+		for (int i = 0; i < 4; i++) {
+			std::string s = strs[i];
+			for (int j = 0; j < s.size(); j++) {
+				inData[4 * j + i] = static_cast<unsigned char>(s[j]);
+			}
+		}
 
-	std::string got = toHex(outData, 32);
-	if (got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
-		throw kristforge::Error("testDigest55 failed: got " + got);
+		cl::Buffer input(ctx, CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY, sizeof(inData));
+		cl::Buffer output(ctx, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY, sizeof(outData));
+
+		testDigest55.setArg(0, input); // input data
+		testDigest55.setArg(1, 3); // input length
+		testDigest55.setArg(2, output); // output
+
+		cmd.enqueueWriteBuffer(input, CL_FALSE, 0, sizeof(inData), inData);
+		cmd.enqueueTask(testDigest55);
+		cmd.enqueueReadBuffer(output, CL_FALSE, 0, sizeof(outData), outData);
+		cmd.finish();
+
+		// deinterleave data
+		for (int i = 0; i < 4; i++) {
+			unsigned char deinterleaved[32] = {0};
+			for (int j = 0; j < 32; j++) {
+				deinterleaved[j] = outData[4 * j + i];
+			}
+
+			std::string got = toHex(deinterleaved, 32);
+
+			if (got != hashes[i]) {
+				throw kristforge::Error("testDigest55 failed: got " + got + " for " + std::to_string(i));
+			}
+		}
+	} else {
+		unsigned char inData[64] = "abc", outData[32];
+
+		cl::Buffer input(ctx, CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY, sizeof(inData));
+		cl::Buffer output(ctx, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY, sizeof(outData));
+
+		testDigest55.setArg(0, input); // input data
+		testDigest55.setArg(1, 3); // input length
+		testDigest55.setArg(2, output); // output
+
+		cmd.enqueueWriteBuffer(input, CL_FALSE, 0, sizeof(inData), inData);
+		cmd.enqueueTask(testDigest55);
+		cmd.enqueueReadBuffer(output, CL_FALSE, 0, sizeof(outData), outData);
+		cmd.finish();
+
+		std::string got = toHex(outData, 32);
+		if (got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+			throw kristforge::Error("testDigest55 failed: got " + got);
+		}
 	}
 }
 
@@ -284,8 +319,6 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 			state->cv.wait(lock, [&state] { return state->blockValid.load(); });
 		}
 
-//		if (!state->blockValid) continue;
-
 		// we have a valid block, start mining
 		const long index = state->blockIndex;
 
@@ -297,7 +330,9 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 		kernel.setArg(4, state->work.load());
 		cmd.finish();
 
-		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += worksize, state->totalHashes += worksize) {
+		for (long offset = 0;
+		     state->blockValid && state->blockIndex == index; offset += worksize, state->totalHashes += (worksize *
+		                                                                                                 vecsize)) {
 			// set offset
 			kernel.setArg(3, offset);
 

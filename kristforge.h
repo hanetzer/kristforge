@@ -183,7 +183,7 @@ namespace kristforge {
 		/**
 		 * Creates a miner using the given OpenCL device
 		 */
-		explicit Miner(const cl::Device &dev, std::array<char, 2> prefix, std::optional<long> worksize = {});
+		explicit Miner(const cl::Device &dev, std::array<char, 2> prefix, int vecsize = 1, std::optional<long> worksize = {});
 
 		/**
 		 * Runs tests to ensure the OpenCL is working properly
@@ -213,6 +213,7 @@ namespace kristforge {
 		const cl::Program program;
 
 		const long worksize;
+		const int vecsize;
 		const std::array<char, 2> prefix;
 	};
 

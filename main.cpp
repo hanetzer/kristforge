@@ -24,6 +24,14 @@ public:
 	bool check(const std::string &value) const override { return value.size() == 10; }
 };
 
+class VectorSizeConstraint : public TCLAP::Constraint<int> {
+	std::string description() const override { return "1 | 2 | 4"; }
+
+	std::string shortID() const override { return "1 | 2 | 4"; }
+
+	bool check(const int &i) const override { return i == 1 || i == 2 || i == 4; }
+};
+
 void printDeviceList() {
 	const char *fmtString = "%-30.30s | %-15.15s | %-7.7s\n";
 	printf(fmtString, "Device", "ID", "Score");
@@ -79,6 +87,8 @@ int main(int argc, const char **argv) {
 		TCLAP::SwitchArg listDevicesArg("l", "list-devices", "Display a list of compatible devices and their IDs", cmd);
 		TCLAP::ValueArg<std::string> nodeArg("n", "node", "Specifies which krist node to connect to", false, "https://krist.ceriat.net/ws/start", "krist node url", cmd);
 		TCLAP::SwitchArg verboseArg("v", "verbose", "Enables extra logging", cmd);
+		TCLAP::ValueArg<int> vectorSizeArg("V", "vector-size", "Sets the vector size", false, 1, new VectorSizeConstraint, cmd);
+		TCLAP::SwitchArg testArg("t", "tests-only", "Don't mine, just run tests", cmd);
 		// @formatter:on
 
 		cmd.parse(argc, argv);
@@ -92,7 +102,7 @@ int main(int argc, const char **argv) {
 
 		if (allDevicesArg.isSet()) {
 			for (const cl::Device &dev : kristforge::getAllDevices()) {
-				miners.emplace_back(dev, generatePrefix());
+				miners.emplace_back(dev, generatePrefix(), vectorSizeArg.getValue());
 			}
 		}
 
@@ -103,7 +113,7 @@ int main(int argc, const char **argv) {
 				std::cerr << "No available devices" << std::endl;
 			}
 
-			miners.emplace_back(*best, generatePrefix());
+			miners.emplace_back(*best, generatePrefix(), vectorSizeArg.getValue());
 		}
 
 		for (const std::string &id : devicesArg) {
@@ -114,7 +124,7 @@ int main(int argc, const char **argv) {
 				return ErrorCodes::INVALID_ARGS;
 			}
 
-			miners.emplace_back(*dev, generatePrefix());
+			miners.emplace_back(*dev, generatePrefix(), vectorSizeArg.getValue());
 		}
 
 		if (miners.empty()) {
@@ -122,9 +132,15 @@ int main(int argc, const char **argv) {
 			return ErrorCodes::INVALID_ARGS;
 		}
 
-		std::cout << "Using miners:" << std::endl;
+		std::cout << "Running tests:" << std::endl;
 		for (const kristforge::Miner &m : miners) {
 			std::cout << m << std::endl;
+			m.runTests();
+		}
+		std::cout << "All miners tested successfully" << std::endl;
+
+		if (testArg.isSet()) {
+			return ErrorCodes::OK;
 		}
 
 		krist::MiningComms *comms;
