@@ -118,6 +118,8 @@ namespace kristforge {
 
 		inline long getTotalSolved() { return numSolved; }
 
+		inline kristAddress getAddress() { return address; }
+
 	private:
 		void solved(const std::string &solution, const Miner &miner);
 

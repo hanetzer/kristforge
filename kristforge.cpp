@@ -266,7 +266,7 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 	cl::Buffer addressBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 10);
 	cl::Buffer blockBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 12);
 	cl::Buffer prefixBuf(ctx, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY, 2);
-	cl::Buffer solutionBuf(ctx, CL_MEM_READ_ONLY, 34);
+	cl::Buffer solutionBuf(ctx, CL_MEM_READ_ONLY, 12);
 
 	// copy constant data to buffers
 	cmd.enqueueWriteBuffer(addressBuf, CL_FALSE, 0, 10, state->address.data());
@@ -289,11 +289,11 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 		// we have a valid block, start mining
 		const long index = state->blockIndex;
 
-		char solutionOut[34] = {0};
+		char solutionOut[12] = {0};
 
 		// set inputs
 		cmd.enqueueWriteBuffer(blockBuf, CL_FALSE, 0, 12, state->prevBlock.data());
-		cmd.enqueueWriteBuffer(solutionBuf, CL_FALSE, 0, 34, solutionOut);
+		cmd.enqueueWriteBuffer(solutionBuf, CL_FALSE, 0, 12, solutionOut);
 		kernel.setArg(4, state->work.load());
 		cmd.finish();
 
@@ -303,12 +303,12 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 
 			// invoke kernel
 			cmd.enqueueNDRangeKernel(kernel, 0, worksize);
-			cmd.enqueueReadBuffer(solutionBuf, CL_FALSE, 0, 34, solutionOut);
+			cmd.enqueueReadBuffer(solutionBuf, CL_FALSE, 0, 12, solutionOut);
 			cmd.finish();
 
 			// check for a valid solution
 			if (solutionOut[0] != 0) {
-				state->solved(std::string(solutionOut, 34), *this);
+				state->solved(std::string(solutionOut, 12), *this);
 				break;
 			}
 		}

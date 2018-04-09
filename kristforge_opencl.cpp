@@ -137,7 +137,7 @@ __kernel void krist_miner(
 	__global const uchar *prefix,   // 2 bytes
 	const long offset,              // convert to 10 bytes
 	const long work,
-	__global uchar *solution) {     // 34 bytes
+	__global uchar *solution) {     // 12 bytes
 
 	int id = get_global_id(0);
 	long nonce = id + offset;
@@ -166,16 +166,10 @@ __kernel void krist_miner(
 	if (score_hash(hashed) < work) {
 		// copy data to output
 #pragma unroll
-		for (i = 0; i < 10; i++) solution[i] = kristAddress[i];
+		for (i = 0; i < 2; i++) solution[i] = prefix[i];
 
 #pragma unroll
-		for (i = 10; i < 22; i++) solution[i] = block[i - 10];
-
-#pragma unroll
-		for (i = 22; i < 24; i++) solution[i] = prefix[i - 22];
-
-#pragma unroll
-		for (i = 24; i < 34; i++) solution[i] = ((nonce >> ((i - 24) * 5)) & 31) + 48;
+		for (i = 2; i < 12; i++) solution[i] = ((nonce >> ((i - 2) * 5)) & 31) + 48;
 	}
 
 }

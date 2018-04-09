@@ -106,8 +106,8 @@ std::shared_ptr<std::promise<bool>> krist::MiningComms::submitSolution(const std
 	Json::Value root;
 	root["type"] = "submit_block";
 	root["id"] = id;
-	root["address"] = solution.substr(0, 10);
-	root["nonce"] = solution.substr(22, 12);
+	root["address"] = std::string(state->getAddress().data(), 10);
+	root["nonce"] = solution;
 
 	static Json::StreamWriter *writer = Json::StreamWriterBuilder().newStreamWriter();
 
