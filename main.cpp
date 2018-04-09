@@ -65,7 +65,7 @@ enum ErrorCodes {
 };
 
 std::string formatHashrate(long hashesPerSecond) {
-	static const char *suffixes[] = { "h/s", "kh/s", "Mh/s", "Gh/s", "Th/s", "Ph/s", "Eh/s" };
+	static const char *suffixes[] = {"h/s", "kh/s", "Mh/s", "Gh/s", "Th/s", "Ph/s", "Eh/s"};
 
 	auto scale = std::max(0, static_cast<int>(0, log(hashesPerSecond) / log(1000)));
 	double value = hashesPerSecond / pow(1000, scale);
@@ -89,6 +89,8 @@ int main(int argc, const char **argv) {
 		TCLAP::SwitchArg verboseArg("v", "verbose", "Enables extra logging", cmd);
 		TCLAP::ValueArg<int> vectorSizeArg("V", "vector-size", "Sets the vector size", false, 1, new VectorSizeConstraint, cmd);
 		TCLAP::SwitchArg testArg("t", "tests-only", "Don't mine, just run tests", cmd);
+		TCLAP::MultiArg<int> deviceNumsArg("N", "device-num", "Use a given device by its position in the device list - generally a bad idea!", false, "number", cmd);
+		TCLAP::ValueArg<long> worksizeArg("w", "worksize", "Sets the work group size", false, -1, "number", cmd);
 		// @formatter:on
 
 		cmd.parse(argc, argv);
@@ -98,38 +100,58 @@ int main(int argc, const char **argv) {
 			return ErrorCodes::OK;
 		}
 
-		std::vector<kristforge::Miner> miners;
+		std::vector<cl::Device> allDevices = kristforge::getAllDevices();
+		std::vector<cl::Device> selectedDevices;
 
 		if (allDevicesArg.isSet()) {
-			for (const cl::Device &dev : kristforge::getAllDevices()) {
-				miners.emplace_back(dev, generatePrefix(), vectorSizeArg.getValue());
+			for (const cl::Device &dev : allDevices) {
+				selectedDevices.push_back(dev);
 			}
 		}
 
 		if (bestDeviceArg.isSet()) {
-			auto best = kristforge::getBestDevice();
+			auto best = kristforge::getBestDevice(allDevices);
 
 			if (!best) {
 				std::cerr << "No available devices" << std::endl;
+				return ErrorCodes::INTERNAL_ERROR;
 			}
 
-			miners.emplace_back(*best, generatePrefix(), vectorSizeArg.getValue());
+			selectedDevices.push_back(*best);
 		}
 
 		for (const std::string &id : devicesArg) {
-			auto dev = kristforge::getDeviceByID(id);
+			auto dev = kristforge::getDeviceByID(id, allDevices);
 
 			if (!dev) {
 				std::cerr << "Unknown device ID: " << id << std::endl;
 				return ErrorCodes::INVALID_ARGS;
 			}
 
-			miners.emplace_back(*dev, generatePrefix(), vectorSizeArg.getValue());
+			selectedDevices.push_back(*dev);
 		}
 
-		if (miners.empty()) {
+		for (const int i : deviceNumsArg) {
+			if (i >= allDevices.size()) {
+				std::cerr << "Invalid device number: " << i << std::endl;
+				return ErrorCodes::INVALID_ARGS;
+			}
+
+			selectedDevices.push_back(allDevices[i]);
+		}
+
+		if (selectedDevices.empty()) {
 			std::cerr << "No devices specified" << std::endl;
 			return ErrorCodes::INVALID_ARGS;
+		}
+
+		std::vector<kristforge::Miner> miners;
+
+		std::optional<long> globalWorksize = worksizeArg.isSet() ? worksizeArg.getValue() : std::optional<long>();
+
+		for (const cl::Device &dev : selectedDevices) {
+			miners.emplace_back(dev, generatePrefix(), vectorSizeArg.getValue(),
+			                    worksizeArg.isSet() ? worksizeArg.getValue() : globalWorksize);
 		}
 
 		std::cout << "Running tests:" << std::endl;
@@ -161,12 +183,13 @@ int main(int argc, const char **argv) {
 			threads.emplace_back([&] { m.mine(state); });
 		}
 
-		std::thread statusThread([state]{
+		std::thread statusThread([state] {
 			for (long hashes = 0; true; hashes = state->getTotalHashes()) {
 				std::this_thread::sleep_for(std::chrono::seconds(3));
 				long diff = state->getTotalHashes() - hashes;
 
-				std::cout << "Speed: " << formatHashrate(diff / 3) << " Solved: " << state->getTotalSolved() << std::endl;
+				std::cout << "Speed: " << formatHashrate(diff / 3) << " Solved: " << state->getTotalSolved()
+				          << std::endl;
 			}
 		});
 

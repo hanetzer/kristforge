@@ -158,7 +158,9 @@ std::ostream &kristforge::operator<<(std::ostream &os, const kristforge::Miner &
 	auto platformName = cl::Platform(dev.getInfo<CL_DEVICE_PLATFORM>()).getInfo<CL_PLATFORM_NAME>();
 	auto id = getDeviceID(m.getDevice());
 
-	return os << "Miner ("
+	return os << "Miner: worksize " << std::to_string(m.worksize)
+	          << " vecsize " << std::to_string(m.vecsize)
+	          << " ("
 	          << devName.data()
 	          << (id ? " [" + *id + "]" : "")
 	          << " on "
@@ -280,9 +282,12 @@ void kristforge::Miner::runTests() const noexcept(false) {
 				throw kristforge::Error("testDigest55 failed: got " + got + " for " + std::to_string(i));
 			}
 
-			long expectedScore = hash[5] + (hash[4] << 8) + (hash[3] << 16) + ((long)hash[2] << 24) + ((long) hash[1] << 32) + ((long) hash[0] << 40);
+			long expectedScore =
+					hash[5] + (hash[4] << 8) + (hash[3] << 16) + ((long) hash[2] << 24) + ((long) hash[1] << 32) +
+					((long) hash[0] << 40);
 			if (expectedScore != scoreOutData[i]) {
-				throw kristforge::Error("testScore failed: got " + std::to_string(scoreOutData[i]) + ", expected " + std::to_string(expectedScore) + " for " + std::to_string(i));
+				throw kristforge::Error("testScore failed: got " + std::to_string(scoreOutData[i]) + ", expected " +
+				                        std::to_string(expectedScore) + " for " + std::to_string(i));
 			}
 			//@formatter:on
 		}
@@ -387,8 +392,10 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 		cmd.finish();
 
 		// @formatter:off
-		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += (worksize * vecsize), state->totalHashes += (worksize * vecsize)) {
-		// @formatter:on
+		for (long offset = 0;
+		     state->blockValid && state->blockIndex == index; offset += (worksize * vecsize), state->totalHashes += (
+				worksize * vecsize)) {
+			// @formatter:on
 			// set offset
 			kernel.setArg(3, offset);
 

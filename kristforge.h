@@ -215,6 +215,8 @@ namespace kristforge {
 		const long worksize;
 		const int vecsize;
 		const std::array<char, 2> prefix;
+
+		friend std::ostream &operator<<(std::ostream &os, const Miner &m);
 	};
 
 	/**
