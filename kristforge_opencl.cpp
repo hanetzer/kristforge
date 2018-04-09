@@ -8,8 +8,8 @@ const char openclSource[] = R"ocl(
 	#define convert_uc(x) convert_uchar4(x)
 	#define convert_l(x) convert_long4(x)
 
-	#define vload_uc(x, y) vload4((x), (y))
-	#define vstore_uc(x, y, z) vstore4((x), (y), (z))
+	#define vload(x, y) vload4((x), (y))
+	#define vstore(x, y, z) vstore4((x), (y), (z))
 #elif defined(VEC2)
 	typedef uint2 ui;
 	typedef uchar2 uc;
@@ -19,8 +19,8 @@ const char openclSource[] = R"ocl(
 	#define convert_uc(x) convert_uchar2(x)
 	#define convert_l(x) convert_long2(x)
 
-	#define vload_uc(x, y) vload2((x), (y))
-	#define vstore_uc(x, y, z) vstore2((x), (y), (z))
+	#define vload(x, y) vload2((x), (y))
+	#define vstore(x, y, z) vstore2((x), (y), (z))
 #else
 	typedef uint ui;
 	typedef uchar uc;
@@ -30,8 +30,8 @@ const char openclSource[] = R"ocl(
 	#define convert_uc(x) convert_uchar(x)
 	#define convert_l(x) convert_long(x)
 
-	#define vload_uc(x, y) (y)[(x)]
-	#define vstore_uc(x, y, z) (z)[(y)] = (x)
+	#define vload(x, y) (y)[(x)]
+	#define vstore(x, y, z) (z)[(y)] = (x)
 #endif
 
 // right rotate macro
@@ -155,39 +155,54 @@ void digest55(uc *data, uint inputLen, uc *hash) {
 }
 
 __kernel
-__attribute__((vec_type_hint(ui)))
 void testDigest55(__global uchar *input, uint len, __global uchar *output) {
 	uc in[64], out[32];
 
 #pragma unroll
-	for (int i = 0; i < 64; i++) in[i] = vload_uc(i, input);
+	for (int i = 0; i < 64; i++) in[i] = vload(i, input);
 
 	digest55(in, len, out);
 
 #pragma unroll
-	for (int i = 0; i < 32; i++) vstore_uc(out[i], i, output);
+	for (int i = 0; i < 32; i++) vstore(out[i], i, output);
 }
 
 l score_hash(uc *hash) {
-	return convert_l(hash[5]) + convert_l(hash[4] << 8) + convert_l(hash[3] << 16) + (convert_l(hash[2]) << 24) + (convert_l(hash[1]) << 32) + (convert_l(hash[0]) << 40);
+	return convert_l(hash[5]) + (convert_l(hash[4]) << 8) + (convert_l(hash[3]) << 16) + (convert_l(hash[2]) << 24) + (convert_l(hash[1]) << 32) + (convert_l(hash[0]) << 40);
+}
+
+long score_hash_scalar(uchar *hash) {
+	return (hash[5]) + (hash[4] << 8) + (hash[3] << 16) + (((long)hash[2]) << 24) + (((long)hash[1]) << 32) + (((long)hash[0]) << 40);
+}
+
+__kernel
+void testScore(__global uchar *hash, __global long *scores) {
+	uc in[32];
+
+#pragma unroll
+	for (int i = 0; i < 32; i++) in[i] = vload(i, hash);
+
+	l score = score_hash(in);
+
+	vstore(score, 0, scores);
 }
 
 __kernel
 __attribute__((vec_type_hint(ui)))
 void krist_miner(
 	__global const uchar *kristAddress,  // 10 bytes
-	__global const uchar *block,    // 12 bytes
-	__global const uchar *prefix,   // 2 bytes
-	const long offset,              // convert to 10 bytes
+	__global const uchar *block,         // 12 bytes
+	__global const uchar *prefix,        // 2 bytes
+	const long offset,                   // convert to 10 bytes
 	const long work,
-	__global uchar *solution) {     // 12 bytes
+	__global uchar *solution) {          // 12 bytes
 
 	int id = get_global_id(0);
-	long nonce = id + offset;
-	uchar input[64];
-	uchar hashed[32];
+	long nonce = (id * VECSIZE) + offset;
+	uc input[64];
+	uc hashed[32];
 	int i;
-/*
+
 	// copy data to input
 
 #pragma unroll
@@ -206,6 +221,8 @@ void krist_miner(
 	digest55(input, 34, hashed);
 
 	// check for a solution
+
+#if VECSIZE == 1
 	if (score_hash(hashed) < work) {
 		// copy data to output
 #pragma unroll
@@ -214,6 +231,39 @@ void krist_miner(
 #pragma unroll
 		for (i = 2; i < 12; i++) solution[i] = ((nonce >> ((i - 2) * 5)) & 31) + 48;
 	}
-*/
+#elif VECSIZE == 2
+// meh no one cares about vec2s
+#elif VECSIZE == 4
+	if (any(score_hash(hashed) < work)) {
+#pragma unroll
+		for (int n = 0; n < 4; n++) {
+			uchar extracted[32];
+
+			union {
+				uchar component[VECSIZE];
+				uc vector;
+			} extractor;
+
+#pragma unroll
+			for (int i = 0; i < 32; i++) {
+				extractor.vector = hashed[i];
+				extracted[i] = extractor.component[n];
+			}
+
+			if (score_hash_scalar(extracted < work) {
+				// copy data to output
+#pragma unroll
+				for (i = 0; i < 2; i++) solution[i] = prefix[i];
+
+#pragma unroll
+				for (i = 2; i < 12; i++) {
+					solution[i] = ((nonce >> ((i - 2) * 5)) & 31) + 48;
+				}
+			}
+		}
+	}
+#else
+#error Invalid vector size
+#endif
 }
 )ocl";

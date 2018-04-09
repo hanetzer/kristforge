@@ -227,6 +227,7 @@ std::string toHex(const unsigned char *data, size_t dataSize) {
 
 void kristforge::Miner::runTests() const noexcept(false) {
 	cl::Kernel testDigest55(program, "testDigest55");
+	cl::Kernel testScore(program, "testScore");
 
 	if (vecsize == 4) {
 		std::string strs[] = {"abc", "def", "ghi", "jkl"};
@@ -238,12 +239,67 @@ void kristforge::Miner::runTests() const noexcept(false) {
 		};
 
 		unsigned char inData[64 * 4] = {0}, outData[32 * 4];
+		long scoreOutData[4] = {0};
 
 		// interleave the data so that it can be loaded properly
 		for (int i = 0; i < 4; i++) {
 			std::string s = strs[i];
 			for (int j = 0; j < s.size(); j++) {
 				inData[4 * j + i] = static_cast<unsigned char>(s[j]);
+			}
+		}
+
+		cl::Buffer input(ctx, CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY, sizeof(inData));
+		cl::Buffer output(ctx, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, sizeof(outData));
+		cl::Buffer scores(ctx, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY, sizeof(scoreOutData));
+
+		testDigest55.setArg(0, input); // input data
+		testDigest55.setArg(1, 3); // input length
+		testDigest55.setArg(2, output); // output
+
+		testScore.setArg(0, output);
+		testScore.setArg(1, scores);
+
+		cmd.enqueueWriteBuffer(input, CL_FALSE, 0, sizeof(inData), inData);
+		cmd.enqueueTask(testDigest55);
+		cmd.enqueueTask(testScore);
+		cmd.enqueueReadBuffer(output, CL_FALSE, 0, sizeof(outData), outData);
+		cmd.enqueueReadBuffer(scores, CL_FALSE, 0, sizeof(scoreOutData), scoreOutData);
+		cmd.finish();
+
+		// deinterleave and check data
+		for (int i = 0; i < 4; i++) {
+			unsigned char hash[32] = {0};
+			for (int j = 0; j < 32; j++) {
+				hash[j] = outData[4 * j + i];
+			}
+
+			//@formatter:off
+			std::string got = toHex(hash, 32);
+			if (got != hashes[i]) {
+				throw kristforge::Error("testDigest55 failed: got " + got + " for " + std::to_string(i));
+			}
+
+			long expectedScore = hash[5] + (hash[4] << 8) + (hash[3] << 16) + ((long)hash[2] << 24) + ((long) hash[1] << 32) + ((long) hash[0] << 40);
+			if (expectedScore != scoreOutData[i]) {
+				throw kristforge::Error("testScore failed: got " + std::to_string(scoreOutData[i]) + ", expected " + std::to_string(expectedScore) + " for " + std::to_string(i));
+			}
+			//@formatter:on
+		}
+	} else if (vecsize == 2) {
+		std::string strs[] = {"abc", "def"};
+		std::string hashes[] = {
+				"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+				"cb8379ac2098aa165029e3938a51da0bcecfc008fd6795f401178647f96c5b34"
+		};
+
+		unsigned char inData[64 * 2] = {0}, outData[32 * 2];
+
+		// interleave the data so that it can be loaded properly
+		for (int i = 0; i < 2; i++) {
+			std::string s = strs[i];
+			for (int j = 0; j < s.size(); j++) {
+				inData[2 * j + i] = static_cast<unsigned char>(s[j]);
 			}
 		}
 
@@ -260,10 +316,10 @@ void kristforge::Miner::runTests() const noexcept(false) {
 		cmd.finish();
 
 		// deinterleave data
-		for (int i = 0; i < 4; i++) {
+		for (int i = 0; i < 2; i++) {
 			unsigned char deinterleaved[32] = {0};
 			for (int j = 0; j < 32; j++) {
-				deinterleaved[j] = outData[4 * j + i];
+				deinterleaved[j] = outData[2 * j + i];
 			}
 
 			std::string got = toHex(deinterleaved, 32);
@@ -330,9 +386,9 @@ void kristforge::Miner::mine(std::shared_ptr<MiningState> state) const {
 		kernel.setArg(4, state->work.load());
 		cmd.finish();
 
-		for (long offset = 0;
-		     state->blockValid && state->blockIndex == index; offset += worksize, state->totalHashes += (worksize *
-		                                                                                                 vecsize)) {
+		// @formatter:off
+		for (long offset = 0; state->blockValid && state->blockIndex == index; offset += (worksize * vecsize), state->totalHashes += (worksize * vecsize)) {
+		// @formatter:on
 			// set offset
 			kernel.setArg(3, offset);
 
